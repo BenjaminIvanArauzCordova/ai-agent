@@ -21,15 +21,8 @@ export function DropZone({ onFile, compact = false }: Props) {
     <div
       className={`dropzone${compact ? " compact" : ""}`}
       data-dragging={dragging}
-      role="button"
-      tabIndex={0}
-      onClick={open}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          open();
-        }
-      }}
+      role="group"
+      aria-label="CSV file upload area"
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -42,11 +35,16 @@ export function DropZone({ onFile, compact = false }: Props) {
       }}
     >
       {compact ? (
-        <span>Load another CSV</span>
+        <button type="button" className="dropzone-button" onClick={open}>
+          Load another CSV
+        </button>
       ) : (
         <>
           <p className="dropzone-title">Drop a CSV from the outputs folder</p>
-          <p className="dropzone-hint">or click to choose a file</p>
+          <p className="dropzone-hint">Choose a file from your device, or drag it here.</p>
+          <button type="button" className="dropzone-button" onClick={open}>
+            Choose CSV file
+          </button>
           <p className="dropzone-columns">
             Expected columns: {REQUIRED_COLUMNS.join(", ")}
           </p>

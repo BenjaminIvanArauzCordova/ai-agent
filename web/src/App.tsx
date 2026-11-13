@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { CasesTable } from "./components/CasesTable";
 import { DropZone } from "./components/DropZone";
@@ -12,6 +12,8 @@ import "./App.css";
 
 // Golden-angle hues give every type its own color, however many types there are.
 const colorForType = (index: number) => `hsl(${Math.round((index * 137.5) % 360)} 42% 40%)`;
+const exampleInitiative =
+  "Restaurant reservation API. Fields: party size (1 to 12), date and time, and restaurant time zone. The restaurant is open from 12:00 to 23:00. Reservations cannot be made in the past.";
 
 interface ConversationResult {
   id?: string;
@@ -53,9 +55,13 @@ export default function App() {
   const [chatText, setChatText] = useState("");
   const [proposal, setProposal] = useState<ConversationResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"starting" | "responding" | "generating" | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [policyOnly, setPolicyOnly] = useState(false);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const responseInputRef = useRef<HTMLTextAreaElement>(null);
+  const resultsHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const counts = useMemo(() => countByType(cases), [cases]);
   const colors = useMemo(() => {
@@ -70,6 +76,20 @@ export default function App() {
     [cases, selected, query, policyOnly],
   );
   const policyCount = useMemo(() => cases.filter(needsPolicy).length, [cases]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [messages, busy]);
+
+  useEffect(() => {
+    if (stage !== "generated") return;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth";
+    document.getElementById("results")?.scrollIntoView({ behavior, block: "start" });
+    resultsHeadingRef.current?.focus({ preventScroll: true });
+  }, [stage]);
 
   const clearFilters = () => {
     setSelected(new Set());
@@ -98,6 +118,7 @@ export default function App() {
 
     setError("");
     setBusy(true);
+    setBusyAction("starting");
     setMessages([{ role: "user", message: text }]);
     setProposal(null);
     setSessionId("");
@@ -119,6 +140,7 @@ export default function App() {
       setError(requestError instanceof Error ? requestError.message : "Could not start the conversation.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -129,7 +151,9 @@ export default function App() {
 
     setError("");
     setBusy(true);
-    setMessages((current) => [...current, { role: "user", message: text }]);
+    setBusyAction("responding");
+    const userMessage: ChatMessage = { role: "user", message: text };
+    setMessages((current) => [...current, userMessage]);
     try {
       const result = await postJson<ConversationResult>(
         `/api/sessions/${sessionId}/messages`,
@@ -142,10 +166,13 @@ export default function App() {
         { role: "assistant", message: result.message, questions: result.questions },
       ]);
       setChatText("");
+      responseInputRef.current?.focus();
     } catch (requestError) {
+      setMessages((current) => current.filter((message) => message !== userMessage));
       setError(requestError instanceof Error ? requestError.message : "Could not send your message.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -153,6 +180,7 @@ export default function App() {
     if (!sessionId || busy) return;
     setError("");
     setBusy(true);
+    setBusyAction("generating");
     try {
       const result = await postJson<{ fileName: string; cases: BoundaryCase[] }>(
         `/api/sessions/${sessionId}/approve`,
@@ -172,7 +200,21 @@ export default function App() {
       setError(requestError instanceof Error ? requestError.message : "Could not generate the cases.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
+  };
+
+  const startOver = () => {
+    setStage("idle");
+    setMessages([]);
+    setProposal(null);
+    setSessionId("");
+    setInitiative("");
+    setChatText("");
+    setError("");
+    setCases([]);
+    setFileName("");
+    clearFilters();
   };
 
   const toggleType = (type: string) => {
@@ -189,6 +231,8 @@ export default function App() {
     downloadText(`${baseName}-filtered.json`, toJson(filtered), "application/json");
   const exportCsv = () =>
     downloadText(`${baseName}-filtered.csv`, toCsv(filtered), "text/csv");
+  const downloadGeneratedCsv = () =>
+    downloadText(fileName || "boundary-cases.csv", toCsv(cases), "text/csv");
 
   const hasData = cases.length > 0;
 
@@ -206,23 +250,38 @@ export default function App() {
         {hasData && <DropZone onFile={handleFile} compact />}
       </header>
 
-      <section className="chat-panel" aria-labelledby="chat-title">
+      <section className="chat-panel" aria-labelledby="chat-title" aria-busy={busy}>
         <div className="chat-heading">
           <div>
             <h2 id="chat-title">Generate boundary cases</h2>
             <p>Describe your initiative. Copilot will clarify details, propose a plan, then generate the CSV.</p>
           </div>
-          {stage !== "idle" && (
-            <span className="chat-stage">
-              {stage === "questions" && "Clarifying"}
-              {stage === "proposal" && "Review proposal"}
-              {stage === "generated" && "Complete"}
-            </span>
-          )}
+          {stage !== "idle" && <button className="ghost start-over" type="button" onClick={startOver} disabled={busy}>Start over</button>}
         </div>
 
+        <ol className="workflow-steps" aria-label="Generation steps">
+          {[
+            { label: "Describe", active: stage === "idle" },
+            { label: "Clarify", active: stage === "questions" },
+            { label: "Review", active: stage === "proposal" },
+            { label: "Results", active: stage === "generated" },
+          ].map((step, index) => {
+            const currentIndex = stage === "idle" ? 0 : stage === "questions" ? 1 : stage === "proposal" ? 2 : 3;
+            return (
+              <li
+                className={index < currentIndex ? "complete" : ""}
+                aria-current={step.active ? "step" : undefined}
+                key={step.label}
+              >
+                <span className="step-number">{index < currentIndex ? "✓" : index + 1}</span>
+                <span>{step.label}</span>
+              </li>
+            );
+          })}
+        </ol>
+
         {messages.length > 0 && (
-          <div className="chat-messages" aria-live="polite">
+          <div className="chat-messages" ref={messagesRef} aria-live="polite" aria-relevant="additions">
             {messages.map((message, index) => (
               <article className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
                 <strong>{message.role === "user" ? "You" : "Edge Data Lab"}</strong>
@@ -234,23 +293,44 @@ export default function App() {
                 )}
               </article>
             ))}
+            {busy && (
+              <p className="working-indicator" role="status">
+                <span className="spinner" aria-hidden="true" />
+                {busyAction === "starting" && "Reading your initiative…"}
+                {busyAction === "responding" && "Thinking about your answers…"}
+                {busyAction === "generating" && "Generating and checking the cases…"}
+              </p>
+            )}
           </div>
         )}
 
         {stage === "idle" && (
           <form className="chat-form" onSubmit={startConversation}>
-            <label htmlFor="initiative">Technology initiative</label>
+            <label htmlFor="initiative">What are you building?</label>
+            <p className="field-hint">Include the main fields, rules, and any limits you already know.</p>
             <textarea
               id="initiative"
               value={initiative}
               onChange={(event) => setInitiative(event.target.value)}
-              placeholder="What are you building, and what should it do?"
+              placeholder="Describe your initiative and its important rules…"
               maxLength={10_000}
               required
               rows={4}
+              disabled={busy}
             />
-            <button type="submit" disabled={busy || initiative.trim() === ""}>
-              {busy ? "Starting conversation…" : "Start"}
+            <div className="form-actions">
+              <span className="character-count">{initiative.length.toLocaleString()} / 10,000</span>
+              <button type="submit" disabled={busy || initiative.trim() === ""}>
+                {busy ? "Starting…" : "Start with Copilot"}
+              </button>
+            </div>
+            <button
+              className="example-button"
+              type="button"
+              onClick={() => setInitiative(exampleInitiative)}
+              disabled={busy}
+            >
+              Try an example: restaurant reservations
             </button>
           </form>
         )}
@@ -277,7 +357,7 @@ export default function App() {
                   ))}
                 </ul>
                 <button type="button" onClick={approveProposal} disabled={busy}>
-                  {busy ? "Generating cases…" : "Approve and generate"}
+                  {busy ? "Generating…" : `Approve and generate ${proposal.caseTypes.length} types`}
                 </button>
               </div>
             )}
@@ -285,36 +365,42 @@ export default function App() {
               <label htmlFor="chat-response">
                 {stage === "questions" ? "Your answers" : "Request a change to the proposal (optional)"}
               </label>
+              {stage === "questions" && <p className="field-hint">Answer what you can; mention “not sure” for anything undecided.</p>}
               <textarea
+                ref={responseInputRef}
                 id="chat-response"
                 value={chatText}
                 onChange={(event) => setChatText(event.target.value)}
                 placeholder={stage === "questions" ? "Answer the questions above…" : "Tell Copilot what to adjust…"}
                 maxLength={10_000}
                 rows={3}
+                disabled={busy}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
               />
-              <button type="submit" disabled={busy || chatText.trim() === ""}>
-                {busy ? "Thinking…" : stage === "questions" ? "Send answers" : "Update proposal"}
-              </button>
+              <div className="form-actions">
+                <span className="field-hint">Press Ctrl+Enter to send</span>
+                <button type="submit" disabled={busy || chatText.trim() === ""}>
+                  {busy ? "Sending…" : stage === "questions" ? "Send answers" : "Update proposal"}
+                </button>
+              </div>
             </form>
           </>
         )}
 
         {stage === "generated" && (
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              setStage("idle");
-              setMessages([]);
-              setProposal(null);
-              setSessionId("");
-              setInitiative("");
-              setError("");
-            }}
-          >
-            Start a new initiative
-          </button>
+          <div className="completion-card">
+            <span className="completion-check" aria-hidden="true">✓</span>
+            <div>
+              <h3>Your boundary cases are ready</h3>
+              <p>{cases.length} cases saved to <strong>{fileName}</strong> and loaded into the results table.</p>
+            </div>
+            <button type="button" onClick={downloadGeneratedCsv}>Download CSV</button>
+          </div>
         )}
       </section>
 
@@ -328,6 +414,15 @@ export default function App() {
 
       {hasData && (
         <>
+          <section id="results" className="results-section" aria-labelledby="results-title">
+            <div className="results-heading">
+              <div>
+                <h2 id="results-title" ref={resultsHeadingRef} tabIndex={-1}>Boundary case results</h2>
+                <p>{cases.length} cases across {counts.length} types · {fileName}</p>
+              </div>
+              {stage === "generated" && <button className="ghost" type="button" onClick={downloadGeneratedCsv}>Download full CSV</button>}
+            </div>
+          </section>
           <TypeStrip
             counts={counts}
             colors={colors}
