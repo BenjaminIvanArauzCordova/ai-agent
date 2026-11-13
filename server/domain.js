@@ -1,3 +1,5 @@
+import fc from "fast-check";
+
 export const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -16,8 +18,32 @@ export const RESPONSE_SCHEMA = {
           whatItTests: { type: "string" },
           exampleInput: { type: "string" },
           expectedBehavior: { type: "string" },
+          generator: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["integerRange", "decimalRange", "exampleOnly"] },
+              field: { type: "string" },
+              minimum: { type: ["number", "null"] },
+              maximum: { type: ["number", "null"] },
+              step: { type: ["number", "null"] },
+              samples: { type: "integer", minimum: 0, maximum: 4 },
+              validBehavior: { type: "string" },
+              invalidBehavior: { type: "string" },
+            },
+            required: [
+              "kind",
+              "field",
+              "minimum",
+              "maximum",
+              "step",
+              "samples",
+              "validBehavior",
+              "invalidBehavior",
+            ],
+            additionalProperties: false,
+          },
         },
-        required: ["name", "whatItTests", "exampleInput", "expectedBehavior"],
+        required: ["name", "whatItTests", "exampleInput", "expectedBehavior", "generator"],
         additionalProperties: false,
       },
     },
@@ -129,7 +155,8 @@ export function validateConversationResult(result) {
           item.whatItTests.trim() === "" ||
           typeof item.exampleInput !== "string" ||
           typeof item.expectedBehavior !== "string" ||
-          item.expectedBehavior.trim() === "",
+          item.expectedBehavior.trim() === "" ||
+          !isValidGenerator(item.generator),
       ))
   ) {
     throw new Error("Copilot returned an incomplete proposal.");
@@ -163,7 +190,12 @@ export function validateCases(value) {
 }
 
 export function generateSyntheticCases(proposal) {
-  if (!proposal || !Array.isArray(proposal.caseTypes) || proposal.caseTypes.length === 0) {
+  if (
+    !proposal ||
+    typeof proposal.title !== "string" ||
+    !Array.isArray(proposal.caseTypes) ||
+    proposal.caseTypes.length === 0
+  ) {
     throw new Error("The approved proposal has no boundary types to generate.");
   }
 
@@ -175,39 +207,196 @@ export function generateSyntheticCases(proposal) {
       .replace(/[^A-Z0-9]+/g, "")
       .slice(0, 3) || "EDL";
 
-  const cases = proposal.caseTypes.map((caseType, index) => {
+  const cases = proposal.caseTypes.flatMap((caseType) => {
     if (
       typeof caseType.name !== "string" ||
       typeof caseType.whatItTests !== "string" ||
       typeof caseType.exampleInput !== "string" ||
       typeof caseType.expectedBehavior !== "string" ||
-      caseType.expectedBehavior.trim() === ""
+      caseType.expectedBehavior.trim() === "" ||
+      !isValidGenerator(caseType.generator)
     ) {
       throw new Error("Every proposed boundary type must include its example input and expected behavior.");
     }
 
-    let fields = "initiative input";
-    try {
-      const input = JSON.parse(caseType.exampleInput);
-      if (input && typeof input === "object" && !Array.isArray(input)) {
-        const keys = Object.keys(input);
-        if (keys.length > 0) fields = keys.join(", ");
-      }
-    } catch {
-      // Free-form examples are valid synthetic inputs too.
+    const example = parseExampleInput(caseType.exampleInput);
+    const fields = Object.keys(example).join(", ") || "initiative input";
+    const generator = caseType.generator;
+    if (generator.kind === "exampleOnly") {
+      return [
+        makeCase(
+          caseType,
+          example,
+          fields,
+          caseType.expectedBehavior,
+          "Approved example input.",
+        ),
+      ];
     }
 
-    return {
-      id: `${prefix}-${String(index + 1).padStart(3, "0")}`,
-      type: caseType.name,
-      fields,
-      input: caseType.exampleInput,
-      why_boundary: caseType.whatItTests,
-      expected_behavior: caseType.expectedBehavior,
+    const { field, minimum, maximum, step, samples } = generator;
+    const precision = Math.max(
+      decimalPlaces(minimum),
+      decimalPlaces(maximum),
+      decimalPlaces(step),
+      decimalPlaces(example[field]),
+    );
+    const scale = 10 ** precision;
+    const minimumUnits = Math.round(minimum * scale);
+    const maximumUnits = Math.round(maximum * scale);
+    const stepUnits = Math.round(step * scale);
+    if (
+      !Object.hasOwn(example, field) ||
+      typeof example[field] !== "number" ||
+      precision > 8 ||
+      Math.abs(example[field] * scale - Math.round(example[field] * scale)) > 1e-7 ||
+      !Number.isSafeInteger(minimumUnits) ||
+      !Number.isSafeInteger(maximumUnits) ||
+      !Number.isSafeInteger(stepUnits) ||
+      minimum > maximum ||
+      stepUnits <= 0 ||
+      (maximumUnits - minimumUnits) % stepUnits !== 0 ||
+      (generator.kind === "integerRange" &&
+        (!Number.isInteger(minimum) || !Number.isInteger(maximum) || step !== 1)) ||
+      (generator.kind === "decimalRange" && step >= 1)
+    ) {
+      throw new Error(`Invalid numeric generator configuration for "${caseType.name}".`);
+    }
+
+    const variants = new Map();
+    const addVariant = (units, label) => {
+      const value = units / scale;
+      if (!Number.isFinite(value) || !Number.isSafeInteger(units)) return;
+      const current = variants.get(units);
+      if (current) {
+        if (!current.labels.includes(label)) current.labels.push(label);
+      } else {
+        variants.set(units, { value, labels: [label] });
+      }
     };
+
+    addVariant(minimumUnits - stepUnits, "just below minimum");
+    addVariant(minimumUnits, "at minimum");
+    addVariant(minimumUnits + stepUnits, "just above minimum");
+    addVariant(maximumUnits - stepUnits, "just below maximum");
+    addVariant(maximumUnits, "at maximum");
+    addVariant(maximumUnits + stepUnits, "just above maximum");
+    addVariant(Math.round(example[field] * scale), "approved example");
+
+    const seed = stableSeed(`${proposal.title}:${caseType.name}:${field}`);
+    const sampledUnits = fc.sample(
+      fc.integer({
+        min: 0,
+        max: (maximumUnits - minimumUnits) / stepUnits,
+      }),
+      { seed, numRuns: samples },
+    );
+    sampledUnits.forEach((offset, index) =>
+      addVariant(minimumUnits + offset * stepUnits, `reproducible sample ${index + 1}`),
+    );
+
+    return [...variants.values()].map(({ value, labels }) => {
+      const input = { ...example, [field]: value };
+      const inRange = value >= minimum && value <= maximum;
+      const expectedBehavior = inRange ? generator.validBehavior : generator.invalidBehavior;
+      return makeCase(
+        caseType,
+        input,
+        fields,
+        expectedBehavior,
+        `${labels.join(" / ")}; allowed range is ${minimum} to ${maximum}.`,
+      );
+    });
   });
 
-  return validateCases({ cases });
+  return validateCases({
+    cases: cases.map((boundaryCase, index) => ({
+      ...boundaryCase,
+      id: `${prefix}-${String(index + 1).padStart(3, "0")}`,
+    })),
+  });
+}
+
+function isValidGenerator(generator) {
+  if (!generator || typeof generator !== "object") return false;
+  if (!["integerRange", "decimalRange", "exampleOnly"].includes(generator.kind)) return false;
+  if (
+    typeof generator.field !== "string" ||
+    !Number.isInteger(generator.samples) ||
+    generator.samples < 0 ||
+    generator.samples > 4 ||
+    typeof generator.validBehavior !== "string" ||
+    typeof generator.invalidBehavior !== "string"
+  ) {
+    return false;
+  }
+  if (generator.kind === "exampleOnly") {
+    return (
+      generator.field === "" &&
+      generator.minimum === null &&
+      generator.maximum === null &&
+      generator.step === null &&
+      generator.samples === 0 &&
+      generator.validBehavior.trim() !== ""
+    );
+  }
+  return (
+    generator.field.trim() !== "" &&
+    typeof generator.minimum === "number" &&
+    Number.isFinite(generator.minimum) &&
+    typeof generator.maximum === "number" &&
+    Number.isFinite(generator.maximum) &&
+    typeof generator.step === "number" &&
+    Number.isFinite(generator.step) &&
+    generator.step > 0 &&
+    (generator.kind !== "decimalRange" || generator.step < 1) &&
+    (generator.kind !== "integerRange" ||
+      (Number.isInteger(generator.minimum) &&
+        Number.isInteger(generator.maximum) &&
+        generator.step === 1)) &&
+    generator.validBehavior.trim() !== "" &&
+    generator.invalidBehavior.trim() !== ""
+  );
+}
+
+function parseExampleInput(value) {
+  let input;
+  try {
+    input = JSON.parse(value);
+  } catch {
+    throw new Error("Synthetic generator examples must be valid JSON objects.");
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Synthetic generator examples must be valid JSON objects.");
+  }
+  return input;
+}
+
+function decimalPlaces(value) {
+  const text = String(value).toLowerCase();
+  const [coefficient, exponentText] = text.split("e");
+  const decimals = coefficient.includes(".") ? coefficient.length - coefficient.indexOf(".") - 1 : 0;
+  return Math.max(0, decimals - Number(exponentText ?? 0));
+}
+
+function stableSeed(value) {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function makeCase(caseType, input, fields, expectedBehavior, boundaryReason) {
+  return {
+    id: "",
+    type: caseType.name,
+    fields,
+    input: JSON.stringify(input),
+    why_boundary: `${caseType.whatItTests} ${boundaryReason}`,
+    expected_behavior: expectedBehavior,
+  };
 }
 
 export function toCsv(cases) {

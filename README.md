@@ -16,6 +16,10 @@ Requirements: Node.js 22.12 or later and an authenticated GitHub Copilot CLI.
 
 The API listens on `127.0.0.1:3001`; Vite proxies `/api` requests to it. The
 Copilot SDK uses the current CLI authentication and selected Copilot model.
+For explicitly stated numeric ranges, the agent proposes inclusive limits and
+expected behavior. After approval, the server uses `fast-check` with a stable
+seed to create exact boundary neighbors and reproducible in-range samples.
+Fields without a clear numeric range keep their approved synthetic example.
 
 ## Repository structure
 - `.github/`: existing Copilot agent instructions, prompt, and boundary-family skill

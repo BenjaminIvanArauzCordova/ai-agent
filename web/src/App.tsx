@@ -27,6 +27,16 @@ interface ConversationResult {
     whatItTests: string;
     exampleInput: string;
     expectedBehavior: string;
+    generator: {
+      kind: "integerRange" | "decimalRange" | "exampleOnly";
+      field: string;
+      minimum: number | null;
+      maximum: number | null;
+      step: number | null;
+      samples: number;
+      validBehavior: string;
+      invalidBehavior: string;
+    };
   }[];
 }
 
@@ -358,7 +368,17 @@ export default function App() {
                       <strong>{item.name}</strong>
                       <span>{item.whatItTests}</span>
                       <code>{item.exampleInput}</code>
-                      <span className="proposal-expected"><strong>Expected:</strong> {item.expectedBehavior}</span>
+                      {item.generator.kind === "exampleOnly" ? (
+                        <span className="proposal-expected"><strong>Expected:</strong> {item.expectedBehavior}</span>
+                      ) : (
+                        <>
+                          <span className="proposal-expected">
+                            <strong>Generated:</strong> {item.generator.field} at and around {item.generator.minimum}–{item.generator.maximum}, plus up to {item.generator.samples} reproducible in-range samples.
+                          </span>
+                          <span className="proposal-expected"><strong>In range:</strong> {item.generator.validBehavior}</span>
+                          <span className="proposal-expected"><strong>Out of range:</strong> {item.generator.invalidBehavior}</span>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>

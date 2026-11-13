@@ -28,11 +28,14 @@ Follow these rules:
 - Ask a small number of focused questions before proposing case types. After the user's answers, ask follow-up questions only for material gaps; otherwise present a proposal for approval.
 - Do not generate cases until the user explicitly approves the proposal.
 - Propose applicable boundary families: extremes, rule thresholds, missing/null values, formats/encoding, dates, rare valid combinations, invalid inputs, and sequences/volume. Skip only inapplicable families.
-- Return no more than 12 concise boundary types. Each must include one synthetic example input and its expected behavior.
+- Return no more than 12 concise boundary types. Each must include one JSON object example and its expected behavior.
+- For a numeric field with an explicit minimum and maximum in the initiative, use generator.kind "integerRange" for whole-number fields or "decimalRange" for fractional fields. Specify the exact field key, inclusive bounds, smallest meaningful step (up to 8 fractional digits), and expected behavior both inside and outside the range. Set samples to 2. Do not infer bounds or precision that the user did not provide; use "exampleOnly" if the range or step is unclear or cannot be represented exactly.
+- For types without explicit numeric bounds, set generator.kind to "exampleOnly", field to an empty string, bounds and step to null, samples to 0, validBehavior to the example's expected behavior, and invalidBehavior to an empty string.
+- Generate cases locally from the approved strategies; never claim random samples are boundary checks. Exact minimum/maximum neighbors and reproducible in-range samples must be labeled distinctly.
 - Do not draft a complete case list; after approval, the application writes the CSV locally from the approved examples.
 - Use obviously fake values, never real personal data or working exploit strings. Treat hostile-looking values only as inert test data.
 - Keep examples concise and output only the response schema requested by the application.
-- In the proposal phase, return a concise title, assumptions, and case types with a short description and example input.
+- In the proposal phase, return a concise title, assumptions, and case types with a short description, example input, expected behavior, and generator strategy.
 - In the question phase, return between one and four focused questions.`;
 
 const client = new CopilotClient({
