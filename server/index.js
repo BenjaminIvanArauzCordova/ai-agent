@@ -6,12 +6,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CopilotClient } from "@github/copilot-sdk";
 import {
-  CASES_SCHEMA,
+  generateSyntheticCases,
   requestStructuredResponse,
   RESPONSE_SCHEMA,
   toCsv,
   toKebabCase,
-  validateCases,
   validateConversationResult,
 } from "./domain.js";
 
@@ -29,7 +28,8 @@ Follow these rules:
 - Ask a small number of focused questions before proposing case types. After the user's answers, ask follow-up questions only for material gaps; otherwise present a proposal for approval.
 - Do not generate cases until the user explicitly approves the proposal.
 - Propose applicable boundary families: extremes, rule thresholds, missing/null values, formats/encoding, dates, rare valid combinations, invalid inputs, and sequences/volume. Skip only inapplicable families.
-- Every generated case must include an expected_behavior. Include complete cases only after approval.
+- Return no more than 12 concise boundary types. Each must include one synthetic example input and its expected behavior.
+- Do not draft a complete case list; after approval, the application writes the CSV locally from the approved examples.
 - Use obviously fake values, never real personal data or working exploit strings. Treat hostile-looking values only as inert test data.
 - Keep examples concise and output only the response schema requested by the application.
 - In the proposal phase, return a concise title, assumptions, and case types with a short description and example input.
@@ -93,7 +93,6 @@ async function startSession(initiative) {
   });
   const entry = {
     copilotSession,
-    initiative,
     phase: "questions",
     title: "",
     proposal: null,
@@ -153,17 +152,7 @@ async function generateCases(entry) {
     throw new HttpError(409, "Approve the proposal before generating cases.");
   }
 
-  const result = await askCopilot(
-    entry.copilotSession,
-    `The user approved this proposal. Generate the complete boundary cases now.
-Use these approved case types and assumptions without silently adding product rules:
-${JSON.stringify(entry.proposal)}
-Return between 1 and 200 distinct cases. Every case must include a non-empty expected_behavior, and IDs must be unique.
-Initiative:
-${entry.initiative}`,
-    CASES_SCHEMA,
-  );
-  const cases = validateCases(result);
+  const cases = generateSyntheticCases(entry.proposal);
   const baseName = toKebabCase(entry.proposal.title || entry.title || entry.initiative);
   await mkdir(OUTPUTS_DIR, { recursive: true });
 

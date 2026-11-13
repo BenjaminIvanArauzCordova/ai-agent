@@ -22,7 +22,12 @@ interface ConversationResult {
   questions: string[];
   title: string;
   assumptions: string[];
-  caseTypes: { name: string; whatItTests: string; exampleInput: string }[];
+  caseTypes: {
+    name: string;
+    whatItTests: string;
+    exampleInput: string;
+    expectedBehavior: string;
+  }[];
 }
 
 interface ChatMessage {
@@ -353,6 +358,7 @@ export default function App() {
                       <strong>{item.name}</strong>
                       <span>{item.whatItTests}</span>
                       <code>{item.exampleInput}</code>
+                      <span className="proposal-expected"><strong>Expected:</strong> {item.expectedBehavior}</span>
                     </li>
                   ))}
                 </ul>

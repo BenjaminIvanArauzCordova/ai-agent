@@ -8,45 +8,21 @@ export const RESPONSE_SCHEMA = {
     assumptions: { type: "array", items: { type: "string" } },
     caseTypes: {
       type: "array",
+      maxItems: 12,
       items: {
         type: "object",
         properties: {
           name: { type: "string" },
           whatItTests: { type: "string" },
           exampleInput: { type: "string" },
+          expectedBehavior: { type: "string" },
         },
-        required: ["name", "whatItTests", "exampleInput"],
+        required: ["name", "whatItTests", "exampleInput", "expectedBehavior"],
         additionalProperties: false,
       },
     },
   },
   required: ["phase", "message", "questions", "title", "assumptions", "caseTypes"],
-  additionalProperties: false,
-};
-
-export const CASES_SCHEMA = {
-  type: "object",
-  properties: {
-    cases: {
-      type: "array",
-      minItems: 1,
-      maxItems: 200,
-      items: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          type: { type: "string" },
-          fields: { type: "string" },
-          input: { type: "string" },
-          why_boundary: { type: "string" },
-          expected_behavior: { type: "string" },
-        },
-        required: ["id", "type", "fields", "input", "why_boundary", "expected_behavior"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["cases"],
   additionalProperties: false,
 };
 
@@ -143,12 +119,17 @@ export function validateConversationResult(result) {
     result.phase === "proposal" &&
     (typeof result.title !== "string" ||
       result.caseTypes.length === 0 ||
+      result.caseTypes.length > 12 ||
       result.caseTypes.some(
         (item) =>
           !item ||
           typeof item.name !== "string" ||
+          item.name.trim() === "" ||
           typeof item.whatItTests !== "string" ||
-          typeof item.exampleInput !== "string",
+          item.whatItTests.trim() === "" ||
+          typeof item.exampleInput !== "string" ||
+          typeof item.expectedBehavior !== "string" ||
+          item.expectedBehavior.trim() === "",
       ))
   ) {
     throw new Error("Copilot returned an incomplete proposal.");
@@ -179,6 +160,54 @@ export function validateCases(value) {
     seenIds.add(boundaryCase.id);
   }
   return value.cases;
+}
+
+export function generateSyntheticCases(proposal) {
+  if (!proposal || !Array.isArray(proposal.caseTypes) || proposal.caseTypes.length === 0) {
+    throw new Error("The approved proposal has no boundary types to generate.");
+  }
+
+  const prefix =
+    proposal.title
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "")
+      .slice(0, 3) || "EDL";
+
+  const cases = proposal.caseTypes.map((caseType, index) => {
+    if (
+      typeof caseType.name !== "string" ||
+      typeof caseType.whatItTests !== "string" ||
+      typeof caseType.exampleInput !== "string" ||
+      typeof caseType.expectedBehavior !== "string" ||
+      caseType.expectedBehavior.trim() === ""
+    ) {
+      throw new Error("Every proposed boundary type must include its example input and expected behavior.");
+    }
+
+    let fields = "initiative input";
+    try {
+      const input = JSON.parse(caseType.exampleInput);
+      if (input && typeof input === "object" && !Array.isArray(input)) {
+        const keys = Object.keys(input);
+        if (keys.length > 0) fields = keys.join(", ");
+      }
+    } catch {
+      // Free-form examples are valid synthetic inputs too.
+    }
+
+    return {
+      id: `${prefix}-${String(index + 1).padStart(3, "0")}`,
+      type: caseType.name,
+      fields,
+      input: caseType.exampleInput,
+      why_boundary: caseType.whatItTests,
+      expected_behavior: caseType.expectedBehavior,
+    };
+  });
+
+  return validateCases({ cases });
 }
 
 export function toCsv(cases) {

@@ -282,6 +282,15 @@ h4 {
   display: block;
 }
 
+.proposal-types .proposal-expected {
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+
+.proposal-expected strong {
+  color: var(--ink);
+}
+
 .proposal-types code {
   width: fit-content;
   max-width: 100%;

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  generateSyntheticCases,
   parseStructuredResponse,
   requestStructuredResponse,
   toCsv,
@@ -72,6 +73,52 @@ test("requires unique case IDs and expected behavior", () => {
   assert.deepEqual(validateCases({ cases: [validCase] }), [validCase]);
   assert.throws(() => validateCases({ cases: [{ ...validCase, expected_behavior: "" }] }), /expected behavior/);
   assert.throws(() => validateCases({ cases: [validCase, validCase] }), /duplicate case ID/);
+});
+
+test("generates stable synthetic cases locally from an approved proposal", () => {
+  const proposal = {
+    title: "Mobile Expense Tracker",
+    caseTypes: [
+      {
+        name: "zero amount",
+        whatItTests: "Minimum amount boundary",
+        exampleInput: '{"amount":0,"currency":"USD"}',
+        expectedBehavior: "Reject zero as an expense.",
+      },
+      {
+        name: "unicode category",
+        whatItTests: "Unicode handling",
+        exampleInput: '{"category":"🍜 東京"}',
+        expectedBehavior: "Preserve the category text.",
+      },
+    ],
+  };
+
+  const cases = generateSyntheticCases(proposal);
+  assert.deepEqual(cases, generateSyntheticCases(proposal));
+  assert.deepEqual(cases.map((item) => item.id), ["MOB-001", "MOB-002"]);
+  assert.equal(cases[0].fields, "amount, currency");
+  assert.equal(cases[0].input, proposal.caseTypes[0].exampleInput);
+  assert.equal(cases[0].expected_behavior, "Reject zero as an expense.");
+  assert.equal(cases[1].fields, "category");
+});
+
+test("does not generate approved examples without expected behavior", () => {
+  assert.throws(
+    () =>
+      generateSyntheticCases({
+        title: "Expense Tracker",
+        caseTypes: [
+          {
+            name: "amount",
+            whatItTests: "Amount limit",
+            exampleInput: '{"amount":0}',
+            expectedBehavior: "",
+          },
+        ],
+      }),
+    /expected behavior/,
+  );
 });
 
 test("escapes all CSV cells and sanitizes output filenames", () => {
