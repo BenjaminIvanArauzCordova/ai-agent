@@ -1,0 +1,16 @@
+Mobile expense tracker. Users log expenses (amount, currency, category, date, note),
+see the monthly total per category, and the app flags unusual spending
+(more than 2 times their average).
+
+Sign-up form for a mobile app. Fields: email, password (8 to 64 characters,
+at least one number), and age. Users must be 18 or older. After 5 failed login
+attempts the account is locked for 15 minutes.
+
+Restaurant reservation API. Fields: party size (1 to 12), date and time,
+and restaurant time zone. The restaurant is open from 12:00 to 23:00.
+Reservations cannot be made in the past.
+
+Sentiment classifier for product reviews. Input: review text in English or Spanish.
+Output: positive, neutral, or negative with a confidence score.
+
+I want to build something with AI for my university.
