@@ -1,4 +1,4 @@
-id,family,fields,input,why_boundary,expected_behavior
+id,type,fields,input,why_boundary,expected_behavior
 MAS-001,extreme values,age,"{""email"":""qa@example.invalid"",""password"":""FakePass1"",""age"":0}",Zero is below the eligibility minimum,"Reject sign-up because the user is under 18; do not create an account."
 MAS-002,rule boundaries,age,"{""email"":""qa@example.invalid"",""password"":""FakePass1"",""age"":17}",One year below the age threshold,"Reject sign-up because users must be at least 18."
 MAS-003,rule boundaries,age,"{""email"":""qa@example.invalid"",""password"":""FakePass1"",""age"":18}",Exact eligibility threshold,"Accept the age value if the other fields are valid."

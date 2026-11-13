@@ -1,4 +1,4 @@
-id,family,fields,input,why_boundary,expected_behavior
+id,type,fields,input,why_boundary,expected_behavior
 EXP-001,extreme,amount,"{""amount"":0,""currency"":""USD"",""category"":""Food"",""date"":""2026-06-15"",""note"":""""}","Zero is the lower numeric boundary for an expense.","Define policy; default reject zero as not a positive expense and show a validation error."
 EXP-002,extreme,amount,"{""amount"":-0.01,""currency"":""USD"",""category"":""Food"",""date"":""2026-06-15"",""note"":""""}","A negative amount may represent a refund, but the schema has no transaction type.","Define policy; default reject negative amounts rather than silently treating them as expenses."
 EXP-003,extreme,amount,"{""amount"":999999999999999999999999999999.99,""currency"":""USD"",""category"":""Travel"",""date"":""2026-06-15"",""note"":""""}","An extremely large value can exceed numeric storage or display capacity; no maximum is specified.","Reject values outside the supported numeric range with a validation error; define and document that range."
